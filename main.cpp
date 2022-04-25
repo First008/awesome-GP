@@ -38,19 +38,23 @@ void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 void mouse_callback(GLFWwindow *window, double xpos, double ypos);
 void scroll_callback(GLFWwindow *window, double xoffset, double yoffset);
 void processInput(GLFWwindow *window);
+void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods);
 unsigned int loadTexture(const char *path);
+unsigned int loadCubemap(vector<std::string> faces);
 
 // settings
 const unsigned int SCR_WIDTH = 1280;
 const unsigned int SCR_HEIGHT = 720;
 bool blinn = false;
 bool blinnKeyPressed = false;
+bool isFlashlightOn = false;
 
 // camera
-Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
+Camera camera(glm::vec3(0.0f, 10.0f, 3.0f));
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
+float cameraSpeed = 2;
 
 // timing
 float deltaTime = 0.0f;
@@ -111,6 +115,7 @@ int main(int, char **)
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
     glfwSetScrollCallback(window, scroll_callback);
+    glfwSetKeyCallback(window, key_callback);
 
     glfwSwapInterval(1); // Enable vsync
 
@@ -124,7 +129,7 @@ int main(int, char **)
         std::cout << "Failed to initialize GLAD" << std::endl;
         return -1;
     }
-    stbi_set_flip_vertically_on_load(true);
+    stbi_set_flip_vertically_on_load(false);
     // configure global opengl state
     // -----------------------------
     glEnable(GL_DEPTH_TEST);
@@ -134,10 +139,11 @@ int main(int, char **)
     Shader lighting2Shader("2.2.basic_lighting.vs", "2.2.basic_lighting.fs");
     Shader lightCubeShader("2.2.light_cube.vs", "2.2.light_cube.fs");
     Shader lightingShader("advance.vs", "advance.fs");
+    Shader skyboxShader("skybox.vs", "skybox.fs");
 
     // load models
     // -----------
-    Model syborgModel("./resources/objects/cyborg/cyborg.obj");
+    Model syborgModel("./resources/objects/city/city.obj");
     Model planetModel("./resources/objects/planet/planet.obj");
     float planeVertices[] = {
         // positions            // normals         // texcoords
@@ -148,6 +154,67 @@ int main(int, char **)
         10.0f, -0.5f, 10.0f, 0.0f, 1.0f, 0.0f, 10.0f, 0.0f,
         -10.0f, -0.5f, -10.0f, 0.0f, 1.0f, 0.0f, 0.0f, 10.0f,
         10.0f, -0.5f, -10.0f, 0.0f, 1.0f, 0.0f, 10.0f, 10.0f};
+    // positions of the point lights
+    glm::vec3 pointLightPositions[] = {
+        glm::vec3(0.7f, 0.2f, 2.0f),
+        glm::vec3(2.3f, -3.3f, -4.0f),
+        glm::vec3(-4.0f, 2.0f, -12.0f),
+        glm::vec3(0.0f, 0.0f, -3.0f)};
+
+    float skyboxVertices[] = {
+        // positions
+        -1.0f, 1.0f, -1.0f,
+        -1.0f, -1.0f, -1.0f,
+        1.0f, -1.0f, -1.0f,
+        1.0f, -1.0f, -1.0f,
+        1.0f, 1.0f, -1.0f,
+        -1.0f, 1.0f, -1.0f,
+
+        -1.0f, -1.0f, 1.0f,
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, 1.0f, -1.0f,
+        -1.0f, 1.0f, -1.0f,
+        -1.0f, 1.0f, 1.0f,
+        -1.0f, -1.0f, 1.0f,
+
+        1.0f, -1.0f, -1.0f,
+        1.0f, -1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, -1.0f,
+        1.0f, -1.0f, -1.0f,
+
+        -1.0f, -1.0f, 1.0f,
+        -1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, -1.0f, 1.0f,
+        -1.0f, -1.0f, 1.0f,
+
+        -1.0f, 1.0f, -1.0f,
+        1.0f, 1.0f, -1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        -1.0f, 1.0f, 1.0f,
+        -1.0f, 1.0f, -1.0f,
+
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, 1.0f,
+        1.0f, -1.0f, -1.0f,
+        1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, 1.0f,
+        1.0f, -1.0f, 1.0f};
+
+    // skybox VAO
+    unsigned int skyboxVAO, skyboxVBO;
+    glGenVertexArrays(1, &skyboxVAO);
+    glGenBuffers(1, &skyboxVBO);
+    glBindVertexArray(skyboxVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+
     // plane VAO
     unsigned int planeVAO, planeVBO;
     glGenVertexArrays(1, &planeVAO);
@@ -198,12 +265,21 @@ int main(int, char **)
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(1.0f, 0.5f, 0.31f, 1.00f);
     double animationSpeed;
-    float animSpeedRatio = 1;
+    float animSpeedRatio = 3;
 
     // load textures
     // -------------
     unsigned int floorTexture = loadTexture("./resources/textures/wood.png");
     unsigned int sunTexture = loadTexture("./resources/textures/sun.png");
+
+    vector<std::string> faces{
+        "./resources/textures/skybox/right.jpg",
+        "./resources/textures/skybox/left.jpg",
+        "./resources/textures/skybox/top.jpg",
+        "./resources/textures/skybox/bottom.jpg",
+        "./resources/textures/skybox/front.jpg",
+        "./resources/textures/skybox/back.jpg"};
+    unsigned int cubemapTexture = loadCubemap(faces);
 
     // lightingShader configuration
     // --------------------
@@ -211,6 +287,9 @@ int main(int, char **)
     lightingShader.setInt("texture1", 0);
     lightCubeShader.use();
     lightCubeShader.setInt("texture1", 0);
+    skyboxShader.use();
+    skyboxShader.setInt("skybox", 0);
+
     // lighting info
     // -------------
     glm::vec3 lightPos(0.0f, 0.0f, 0.0f);
@@ -246,39 +325,57 @@ int main(int, char **)
         animationSpeed = glfwGetTime() / animSpeedRatio;
 
         // set light position
-        float lightX = 3 * cos(animationSpeed);
-        float lightY = 4 * sin(animationSpeed);
+        float lightX = 120 * cos(animationSpeed);
+        float lightY = 160 * sin(animationSpeed);
         float lightZ = 0;
-        glm::vec3 lightPos = glm::vec3(lightX, lightY, lightZ);
 
-        // send light position to lightingShader
-        lightingShader.use();
-        lightingShader.setVec3("lightPos", lightPos);
+        glm::vec3 lightPos = glm::vec3(lightX, lightY, lightZ);
+        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+        glm::mat4 view = camera.GetViewMatrix();
+        glm::mat4 syborgmodel = glm::mat4(0.3f);
 
         // draw objects
         lightingShader.use();
-        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
-        glm::mat4 view = camera.GetViewMatrix();
+
         lightingShader.setMat4("projection", projection);
         lightingShader.setMat4("view", view);
         // set light uniforms
         lightingShader.setVec3("viewPos", camera.Position);
         lightingShader.setVec3("lightPos", lightPos);
         lightingShader.setInt("blinn", blinn);
+
+        lightingShader.setVec3("spotLight.position", camera.Position);
+        if (isFlashlightOn)
+        {
+
+            lightingShader.setVec3("spotLight.direction", camera.Front);
+        }
+        else
+        {
+            lightingShader.setVec3("spotLight.direction", camera.Up);
+        }
+        lightingShader.setVec3("spotLight.ambient", 0.0f, 0.0f, 0.0f);
+        lightingShader.setVec3("spotLight.diffuse", 1.0f, 1.0f, 1.0f);
+        lightingShader.setVec3("spotLight.specular", 1.0f, 1.0f, 1.0f);
+        lightingShader.setFloat("spotLight.constant", 1.0f);
+        lightingShader.setFloat("spotLight.linear", 0.09f);
+        lightingShader.setFloat("spotLight.quadratic", 0.032f);
+        lightingShader.setFloat("spotLight.cutOff", glm::cos(glm::radians(12.5f)));
+        lightingShader.setFloat("spotLight.outerCutOff", glm::cos(glm::radians(15.0f)));
         // floor
+
         glBindVertexArray(planeVAO);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, floorTexture);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // render the loaded model
-        glm::mat4 model = glm::mat4(0.3f);
-        model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f)); // translate it down so it's at the center of the scene
-        model = glm::scale(model, glm::vec3(0.3f));                 // it's a bit too big for our scene, so scale it down
-        lightingShader.setMat4("model", model);
+        syborgmodel = glm::translate(syborgmodel, glm::vec3(0.0f, 0.0f, 0.0f)); // translate it down so it's at the center of the scene
+        syborgmodel = glm::scale(syborgmodel, glm::vec3(1));                    // it's a bit too big for our scene, so scale it down
+        lightingShader.setMat4("model", syborgmodel);
         syborgModel.Draw(lightingShader);
 
-        std::cout << (blinn ? "Blinn-Phong" : "Phong") << std::endl;
+        // std::cout << (blinn ? "Blinn-Phong" : "Phong") << std::endl;
         // sun
         glActiveTexture(GL_TEXTURE0);
 
@@ -287,12 +384,26 @@ int main(int, char **)
         lightCubeShader.use();
         lightCubeShader.setMat4("projection", projection);
         lightCubeShader.setMat4("view", view);
-        model = glm::mat4(0.5f);
+        glm::mat4 model = glm::mat4(0.5f);
         model = glm::translate(model, lightPos);
         model = glm::rotate(model, glm::degrees(0.9f), lightPos);
         model = glm::scale(model, lightSize); // a smaller cube
         lightCubeShader.setMat4("model", model);
         planetModel.Draw(lightCubeShader);
+
+        // draw skybox as last
+        glDepthFunc(GL_LEQUAL); // change depth function so depth test passes when values are equal to depth buffer's content
+        skyboxShader.use();
+        view = glm::mat4(glm::mat3(camera.GetViewMatrix())); // remove translation from the view matrix
+        skyboxShader.setMat4("view", view);
+        skyboxShader.setMat4("projection", projection);
+        // skybox cube
+        glBindVertexArray(skyboxVAO);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+        glBindVertexArray(0);
+        glDepthFunc(GL_LESS); // set depth function back to default
 
         // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
         // -------------------------------------------------------------------------------
@@ -320,7 +431,10 @@ int main(int, char **)
 
             ImGui::Text("This is some useful text.");          // Display some text (you can use a format strings too)
             ImGui::Checkbox("Demo Window", &show_demo_window); // Edit bools storing our window open/close state
+            ImGui::SameLine();
             ImGui::Checkbox("Another Window", &show_another_window);
+            ImGui::Checkbox("Flashlight", &isFlashlightOn);
+            ImGui::SliderFloat("Camera Speed", (float *)&cameraSpeed, 1.0f, 20.0f);
             ImGui::SliderFloat("Animation Speed", (float *)&animSpeedRatio, 0.1f, 20.0f);
             ImGui::SliderFloat("Light size", (float *)&lightSizeSliderVal, 0.0f, 1);
             ImGui::SliderFloat3("Light Position", v, 0.0f, 100);
@@ -382,7 +496,8 @@ int main(int, char **)
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
-
+    glDeleteVertexArrays(1, &skyboxVAO);
+    glDeleteBuffers(1, &skyboxVBO);
     glfwDestroyWindow(window);
     glfwTerminate();
 
@@ -399,6 +514,7 @@ void processInput(GLFWwindow *window)
         isFocused = false;
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
+
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
     {
         double xps, yps;
@@ -410,13 +526,13 @@ void processInput(GLFWwindow *window)
     }
 
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        camera.ProcessKeyboard(FORWARD, deltaTime);
+        camera.ProcessKeyboard(FORWARD, deltaTime * cameraSpeed);
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        camera.ProcessKeyboard(BACKWARD, deltaTime);
+        camera.ProcessKeyboard(BACKWARD, deltaTime * cameraSpeed);
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        camera.ProcessKeyboard(LEFT, deltaTime);
+        camera.ProcessKeyboard(LEFT, deltaTime * cameraSpeed);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        camera.ProcessKeyboard(RIGHT, deltaTime);
+        camera.ProcessKeyboard(RIGHT, deltaTime * cameraSpeed);
 
     if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS && !blinnKeyPressed)
     {
@@ -428,7 +544,20 @@ void processInput(GLFWwindow *window)
         blinnKeyPressed = false;
     }
 }
-
+void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods)
+{
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)
+    {
+        if (isFlashlightOn)
+        {
+            isFlashlightOn = false;
+        }
+        else
+        {
+            isFlashlightOn = true;
+        }
+    }
+}
 // glfw: whenever the window size changed (by OS or user resize) this callback function executes
 // ---------------------------------------------------------------------------------------------
 void framebuffer_size_callback(GLFWwindow *window, int width, int height)
@@ -505,6 +634,35 @@ unsigned int loadTexture(char const *path)
         std::cout << "Texture failed to load at path: " << path << std::endl;
         stbi_image_free(data);
     }
+
+    return textureID;
+}
+unsigned int loadCubemap(vector<std::string> faces)
+{
+    unsigned int textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
+
+    int width, height, nrChannels;
+    for (unsigned int i = 0; i < faces.size(); i++)
+    {
+        unsigned char *data = stbi_load(faces[i].c_str(), &width, &height, &nrChannels, 0);
+        if (data)
+        {
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+            stbi_image_free(data);
+        }
+        else
+        {
+            std::cout << "Cubemap texture failed to load at path: " << faces[i] << std::endl;
+            stbi_image_free(data);
+        }
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
     return textureID;
 }
